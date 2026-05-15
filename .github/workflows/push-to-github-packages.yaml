@@ -1,16 +1,18 @@
-name: Publish Docker image to Docker Hub & GHCR
+name: Publish Docker image to GHCR
 
-on: {}
-# Disabled - configure triggers for your own registry before re-enabling
-# on:
-#   release:
-#     types: [published]
-#   workflow_dispatch:
-#     inputs:
-#       version:
-#         description: 'Version tag (e.g., 2509.1)'
-#         required: true
-#         type: string
+# Fork versioning: upstream uses YYMM.N (e.g. 2604.2)
+# This fork appends a build suffix: YYMM.N.X (e.g. 2604.2.1)
+# so it is always clear which upstream release a fork image is based on.
+on:
+  push:
+    tags:
+      - '[0-9][0-9][0-9][0-9].[0-9]*.[0-9]*'   # matches 2604.2.1, 2605.1.3, etc.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag in fork format (e.g., 2604.2.1)'
+        required: true
+        type: string
 
 jobs:
   build-and-push:
@@ -18,9 +20,17 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
 
     steps:
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check out the repo
         uses: actions/checkout@v4
 
@@ -30,37 +40,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata for Docker
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            docker.io/s1t5/mailarchiver
-            ghcr.io/${{ github.repository_owner }}/mailarchiver
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
-            type=raw,value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and push Docker image
-        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ghcr.io/${{ secrets.GHCR_USERNAME }}/mail-archiver:${{ steps.version.outputs.value }}
+            ghcr.io/${{ secrets.GHCR_USERNAME }}/mail-archiver:latest
