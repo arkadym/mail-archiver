@@ -147,16 +147,57 @@ namespace MailArchiver.Services
 
                             // NOTE: Checkpoint clearing is handled by SyncMailAccountAsync itself.
                             _logger.LogInformation("Mail sync completed for account: {AccountName}", account.Name);
+                            try
+                            {
+                                var completedJob = syncJobService.GetJob(jobId);
+                                var accessLogService = accountServices.GetRequiredService<IAccessLogService>();
+                                var syncSummary = completedJob != null
+                                    ? $"Completed sync for mail account: {account.Name}. New: {completedJob.NewEmails}, Failed: {completedJob.FailedEmails}, Deleted: {completedJob.DeletedEmails}"
+                                    : $"Completed sync for mail account: {account.Name}";
+                                await accessLogService.LogAccessAsync("SYSTEM", AccessLogType.Account,
+                                    searchParameters: syncSummary, mailAccountId: account.Id);
+                                if (completedJob != null)
+                                {
+                                    foreach (var failedSummary in completedJob.FailedEmailSummaries)
+                                    {
+                                        await accessLogService.LogAccessAsync("SYSTEM", AccessLogType.Account,
+                                            searchParameters: $"Sync failed email for {account.Name}: {failedSummary}",
+                                            mailAccountId: account.Id);
+                                    }
+                                }
+                            }
+                            catch (Exception logEx)
+                            {
+                                _logger.LogDebug(logEx, "Failed to write sync completion to access log for {AccountName}", account.Name);
+                            }
                         }
                         catch (OperationCanceledException)
                         {
                             _logger.LogWarning("Sync for account {AccountName} timed out after {Timeout} minutes",
                                 account.Name, syncTimeoutMinutes);
+                            try
+                            {
+                                using var logScope = _serviceProvider.CreateScope();
+                                var accessLogService = logScope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                await accessLogService.LogAccessAsync("SYSTEM", AccessLogType.Account,
+                                    searchParameters: $"Sync timed out for mail account: {account.Name} (after {syncTimeoutMinutes} min)",
+                                    mailAccountId: account.Id);
+                            }
+                            catch { }
                         }
                         catch (Exception ex)
                         {
                             _logger.LogError(ex, "Error syncing mail account {AccountName}: {Message}",
                                 account.Name, ex.Message);
+                            try
+                            {
+                                using var logScope = _serviceProvider.CreateScope();
+                                var accessLogService = logScope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                await accessLogService.LogAccessAsync("SYSTEM", AccessLogType.Account,
+                                    searchParameters: $"Sync failed for mail account: {account.Name}: {ex.Message}",
+                                    mailAccountId: account.Id);
+                            }
+                            catch { }
                         }
                         // accountScope disposed here - DbContext + any leftover tracked entities gone
 

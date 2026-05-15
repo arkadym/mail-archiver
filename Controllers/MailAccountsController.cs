@@ -818,6 +818,10 @@ var model = new MailAccountViewModel
                 var jobId = await _syncJobService.StartSyncAsync(id, account.Name);
                 if (!string.IsNullOrEmpty(jobId))
                 {
+                    // Capture username before Task.Run so it can be used in completion callbacks
+                    var capturedAuthService = HttpContext.RequestServices.GetService<MailArchiver.Services.IAuthenticationService>();
+                    var capturedUsername = capturedAuthService?.GetCurrentUserDisplayName(HttpContext) ?? "SYSTEM";
+
                     // Actually perform the sync based on provider type
                     if (account.Provider == ProviderType.M365)
                     {
@@ -838,12 +842,37 @@ var model = new MailAccountViewModel
                                 if (freshAccount != null)
                                 {
                                     await graphEmailService.SyncMailAccountAsync(freshAccount, jobId);
+                                    var completedJob = _syncJobService.GetJob(jobId);
+                                    var accessLogSvc = scope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                    var syncSummary = completedJob != null
+                                        ? $"Completed sync for mail account: {account.Name}. New: {completedJob.NewEmails}, Failed: {completedJob.FailedEmails}, Deleted: {completedJob.DeletedEmails}"
+                                        : $"Completed sync for mail account: {account.Name}";
+                                    await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                        searchParameters: syncSummary, mailAccountId: account.Id);
+                                    if (completedJob != null)
+                                    {
+                                        foreach (var failedSummary in completedJob.FailedEmailSummaries)
+                                        {
+                                            await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                                searchParameters: $"Sync failed email for {account.Name}: {failedSummary}",
+                                                mailAccountId: account.Id);
+                                        }
+                                    }
                                 }
                             }
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error during M365 sync for account {AccountName}: {Message}", account.Name, ex.Message);
                                 _syncJobService.CompleteJob(jobId, false, ex.Message);
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var accessLogSvc = logScope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                    await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                        searchParameters: $"Sync failed for mail account: {account.Name}: {ex.Message}",
+                                        mailAccountId: account.Id);
+                                }
+                                catch { }
                             }
                         });
                     }
@@ -866,22 +895,45 @@ var model = new MailAccountViewModel
                                 if (freshAccount != null)
                                 {
                                     await imapService.SyncMailAccountAsync(freshAccount, jobId);
+                                    var completedJob = _syncJobService.GetJob(jobId);
+                                    var accessLogSvc = scope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                    var syncSummary = completedJob != null
+                                        ? $"Completed sync for mail account: {account.Name}. New: {completedJob.NewEmails}, Failed: {completedJob.FailedEmails}, Deleted: {completedJob.DeletedEmails}"
+                                        : $"Completed sync for mail account: {account.Name}";
+                                    await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                        searchParameters: syncSummary, mailAccountId: account.Id);
+                                    if (completedJob != null)
+                                    {
+                                        foreach (var failedSummary in completedJob.FailedEmailSummaries)
+                                        {
+                                            await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                                searchParameters: $"Sync failed email for {account.Name}: {failedSummary}",
+                                                mailAccountId: account.Id);
+                                        }
+                                    }
                                 }
                             }
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error during IMAP sync for account {AccountName}: {Message}", account.Name, ex.Message);
                                 _syncJobService.CompleteJob(jobId, false, ex.Message);
+                                try
+                                {
+                                    using var logScope = _serviceScopeFactory.CreateScope();
+                                    var accessLogSvc = logScope.ServiceProvider.GetRequiredService<IAccessLogService>();
+                                    await accessLogSvc.LogAccessAsync(capturedUsername, AccessLogType.Account,
+                                        searchParameters: $"Sync failed for mail account: {account.Name}: {ex.Message}",
+                                        mailAccountId: account.Id);
+                                }
+                                catch { }
                             }
                         });
                     }
                     
-                    // Log the sync action
-                    var authService = HttpContext.RequestServices.GetService<MailArchiver.Services.IAuthenticationService>();
-                    var currentUsername = authService.GetCurrentUserDisplayName(HttpContext);
-                    if (!string.IsNullOrEmpty(currentUsername))
+                    // Log the sync start action
+                    if (!string.IsNullOrEmpty(capturedUsername))
                     {
-                        await _accessLogService.LogAccessAsync(currentUsername, AccessLogType.Account, 
+                        await _accessLogService.LogAccessAsync(capturedUsername, AccessLogType.Account, 
                             searchParameters: $"Started sync for mail account: {account.Name}",
                             mailAccountId: account.Id);
                     }

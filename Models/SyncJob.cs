@@ -18,6 +18,11 @@ namespace MailArchiver.Models
         public string? ErrorMessage { get; set; }
         public DateTime? LastSync { get; set; }
         public CancellationTokenSource? CancellationTokenSource { get; set; }
+        /// <summary>
+        /// Brief summaries of individual emails that failed to archive (capped at 100).
+        /// Format: "Folder: {folder} | Subject: {subject} | From: {from} | Date: {date} | Error: {error}"
+        /// </summary>
+        public List<string> FailedEmailSummaries { get; } = new();
     }
 
     public enum SyncJobStatus

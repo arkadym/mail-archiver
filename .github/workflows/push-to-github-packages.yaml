@@ -1,14 +1,16 @@
 name: Publish Docker image to Docker Hub & GHCR
 
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., 2509.1)'
-        required: true
-        type: string
+on: {}
+# Disabled - configure triggers for your own registry before re-enabling
+# on:
+#   release:
+#     types: [published]
+#   workflow_dispatch:
+#     inputs:
+#       version:
+#         description: 'Version tag (e.g., 2509.1)'
+#         required: true
+#         type: string
 
 jobs:
   build-and-push:

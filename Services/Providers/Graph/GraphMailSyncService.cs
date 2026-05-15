@@ -146,18 +146,16 @@ namespace MailArchiver.Services.Providers.Graph
                     deletedEmails = await DeleteOldEmailsAsync(account);
                 }
 
-                if (failedEmails == 0)
+                var trackedAccount = await _context.MailAccounts.FindAsync(account.Id);
+                if (trackedAccount != null)
                 {
-                    var trackedAccount = await _context.MailAccounts.FindAsync(account.Id);
-                    if (trackedAccount != null)
-                    {
-                        trackedAccount.LastSync = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
-                    }
+                    trackedAccount.LastSync = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
                 }
-                else
+
+                if (failedEmails > 0)
                 {
-                    _logger.LogWarning("Not updating LastSync for account {AccountName} due to {FailedCount} failed emails",
+                    _logger.LogWarning("LastSync updated for account {AccountName} despite {FailedCount} failed emails",
                         account.Name, failedEmails);
                 }
 
@@ -567,6 +565,17 @@ namespace MailArchiver.Services.Providers.Graph
                         messages[i].Id, folderNameForStorage, subject, date, ex.Message);
                     result.FailedEmails++;
                     processedInBatch++;
+
+                    if (jobId != null)
+                    {
+                        var innermostMsg = ex.InnerException?.Message ?? ex.Message;
+                        var summary = $"Folder: {folderNameForStorage} | Subject: {subject} | Date: {date} | Error: {innermostMsg}";
+                        _syncJobService.UpdateJobProgress(jobId, job =>
+                        {
+                            if (job.FailedEmailSummaries.Count < 100)
+                                job.FailedEmailSummaries.Add(summary);
+                        });
+                    }
                 }
 
                 // Memory cleanup after each message

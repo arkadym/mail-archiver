@@ -228,25 +228,23 @@ namespace MailArchiver.Services.Providers.Imap
                     return;
                 }
 
-                if (failedEmails == 0)
+                var trackedAccount = await _context.MailAccounts.FindAsync(account.Id);
+                if (trackedAccount != null)
                 {
-                    var trackedAccount = await _context.MailAccounts.FindAsync(account.Id);
-                    if (trackedAccount != null)
-                    {
-                        trackedAccount.LastSync = DateTime.UtcNow;
-                        await _context.SaveChangesAsync();
-                    }
-
-                    if (_bandwidthOptions.Enabled)
-                    {
-                        await _bandwidthService.ClearCheckpointsAsync(account.Id);
-                        _logger.LogDebug("Cleared sync checkpoints for account {AccountName} after successful sync", account.Name);
-                    }
+                    trackedAccount.LastSync = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
                 }
-                else
+
+                if (failedEmails > 0)
                 {
-                    _logger.LogWarning("Not updating LastSync for account {AccountName} due to {FailedCount} failed emails",
+                    _logger.LogWarning("LastSync updated for account {AccountName} despite {FailedCount} failed emails",
                         account.Name, failedEmails);
+                }
+
+                if (_bandwidthOptions.Enabled)
+                {
+                    await _bandwidthService.ClearCheckpointsAsync(account.Id);
+                    _logger.LogDebug("Cleared sync checkpoints for account {AccountName} after successful sync", account.Name);
                 }
 
                 await client.DisconnectAsync(true);
@@ -856,6 +854,16 @@ namespace MailArchiver.Services.Providers.Imap
                                     folder.FullName, emailSubject, emailFrom, emailDate, emailMessageId, uid, isUtf8Error, innermostEx.Message);
 
                                 result.FailedEmails++;
+
+                                if (jobId != null)
+                                {
+                                    var summary = $"Folder: {folder.FullName} | Subject: {emailSubject} | From: {emailFrom} | Date: {emailDate} | Error: {innermostEx.Message}";
+                                    _syncJobService.UpdateJobProgress(jobId, job =>
+                                    {
+                                        if (job.FailedEmailSummaries.Count < 100)
+                                            job.FailedEmailSummaries.Add(summary);
+                                    });
+                                }
                             }
                         }
 
